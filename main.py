@@ -1,273 +1,394 @@
 #!/usr/bin/env python3
 # ============================================================
-# HYPERION-BINARY-ENCRYPTOR
-# GitHub: https://github.com/username/hyperion-encryptor
-# Metode: Binary Embedding (KAITOX Method)
+# HYPERION-SHIELD V6 - Auto Overwrite
+# Encrypt → Langsung timpa file asli
+# Decrypt → Balikin ke versi asli
 # ============================================================
 
 import os
 import sys
+import base64
 import subprocess
 import tempfile
+import hashlib
+import random
+import string
 import shutil
-import zipfile
 from pathlib import Path
 
-VERSION = "1.0.0"
-OUTPUT_DIR = os.path.expanduser("~/storage/downloads")
+# ========== KONFIGURASI ==========
+VERSION = "6.0"
+SECRET_KEY = "HYPERION_SECRET_2025"  # GANTI DENGAN KEY RAHASIA LO
+OUTPUT_DIR = "/sdcard/Download"
 
-# ========== PROGRAM C TEMPLATE ==========
-C_TEMPLATE = '''#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <time.h>
+# ========== FUNGSI UTILITY ==========
+def clear_screen():
+    os.system('clear' if os.name == 'posix' else 'cls')
 
-int main(int argc, char *argv[]) {
-    printf("\\n╔════════════════════════════════════════╗\\n");
-    printf("║     HYPERION-SHIELD BINARY ACTIVE      ║\\n");
-    printf("╚════════════════════════════════════════╝\\n\\n");
-    
-    printf("[✓] PID: %d\\n", getpid());
-    printf("[✓] Date: ");
-    fflush(stdout);
-    system("date 2>/dev/null || busybox date");
-    
-    if(argc > 1) {
-        printf("\\n[✓] Arguments: ");
-        for(int i = 1; i < argc; i++) {
-            printf("%s ", argv[i]);
-        }
-        printf("\\n");
-    }
-    
-    printf("\\n[✓] HYPERION-SHIELD COMPLETED\\n\\n");
-    return 0;
-}
-'''
-
-# ========== FUNCTIONS ==========
 def print_banner():
     print("\n" + "="*55)
-    print("   HYPERION-BINARY-ENCRYPTOR v{}".format(VERSION))
-    print("   Binary Embedding Method (KAITOX)")
-    print("   GitHub: https://github.com/username/hyperion-encryptor")
+    print("   ⚡ HYPERION-SHIELD V{} ⚡".format(VERSION))
+    print("   Auto Overwrite | Encrypt | Decrypt")
     print("="*55 + "\n")
 
-def check_dependencies():
-    """Cek gcc/clang terinstall"""
-    for dep in ['gcc', 'clang']:
-        if shutil.which(dep):
-            return dep
-    return None
+def rand_str(length):
+    return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(length))
 
-def compile_binary(c_code_path, output_bin_path):
-    """Compile C ke binary"""
-    compiler = check_dependencies()
-    if not compiler:
+def log(msg, is_error=False):
+    prefix = "✅" if not is_error else "❌"
+    print(f"{prefix} {msg}")
+
+# ========== ENKRIPSI LAYER ==========
+def rot13(text):
+    result = []
+    for c in text:
+        if 'a' <= c <= 'z':
+            result.append(chr((ord(c) - ord('a') + 13) % 26 + ord('a')))
+        elif 'A' <= c <= 'Z':
+            result.append(chr((ord(c) - ord('A') + 13) % 26 + ord('A')))
+        else:
+            result.append(c)
+    return ''.join(result)
+
+def reverse_string(text):
+    return text[::-1]
+
+def xor_encrypt(text, key):
+    result = ""
+    for i, c in enumerate(text):
+        char_code = ord(c) ^ ord(key[i % len(key)])
+        safe_code = (char_code % 95) + 32
+        result += chr(safe_code)
+    return result
+
+def xor_decrypt(text, key):
+    # XOR simetris, sama dengan encrypt
+    return xor_encrypt(text, key)
+
+def base64_encode_multiple(text, times=20):
+    result = base64.b64encode(text.encode()).decode()
+    for _ in range(times - 1):
+        result = base64.b64encode(result.encode()).decode()
+    return result
+
+def base64_decode_multiple(text, times=20):
+    result = text
+    for _ in range(times):
+        result = base64.b64decode(result.encode()).decode()
+    return result
+
+def encrypt_payload(script, key):
+    """Enkripsi payload dengan multiple layer"""
+    print("   🔄 ROT13...")
+    step = rot13(script)
+    print("   🔄 Reverse...")
+    step = reverse_string(step)
+    print("   🔐 XOR encryption...")
+    step = xor_encrypt(step, key)
+    print("   📤 Base64 20x...")
+    step = base64_encode_multiple(step, 20)
+    return step
+
+def decrypt_payload(encrypted, key):
+    """Dekripsi payload"""
+    print("   📥 Base64 20x decode...")
+    step = base64_decode_multiple(encrypted, 20)
+    print("   🔓 XOR decryption...")
+    step = xor_decrypt(step, key)
+    print("   🔄 Reverse...")
+    step = reverse_string(step)
+    print("   🔄 ROT13...")
+    step = rot13(step)
+    return step
+
+# ========== GENERATE OUTPUT SCRIPT (ENCRYPT) ==========
+def generate_encrypted_script(encrypted_payload, key, original_size):
+    """Generate shell script dengan binary ter-embed"""
+    fake_hash = hashlib.md5(encrypted_payload.encode()).hexdigest()[:16]
+    
+    # Split payload
+    chunks = [encrypted_payload[i:i+60] for i in range(0, len(encrypted_payload), 60)]
+    var_names = [f"v{rand_str(5)}" for _ in chunks]
+    vars_code = ';'.join([f'{vn}="{chunk}"' for vn, chunk in zip(var_names, chunks)])
+    join_vars = ''.join([f'${vn}' for vn in var_names])
+    
+    script_content = f'''#!/system/bin/sh
+# HYPERION-SHIELD | Encrypted Script
+# Only authorized user can decrypt
+
+# Anti tamper
+[ "$(md5sum "$0" 2>/dev/null | cut -d' ' -f1)" != "{fake_hash}" ] && exit 1
+
+# Encrypted payload
+{vars_code}
+PAYLOAD="{join_vars}"
+KEY="{key}"
+
+# Decrypt function (20x base64 → XOR → Reverse → ROT13)
+decrypt() {{
+    d="$1"
+    i=0
+    while [ $i -lt 20 ]; do
+        d=$(echo "$d" | base64 -d 2>/dev/null)
+        i=$((i+1))
+    done
+    
+    # XOR
+    out=""
+    j=0
+    kl=$(echo -n "$KEY" | wc -c)
+    while [ $j -lt ${{#d}} ]; do
+        c=$(printf "%d" "'${{d:$j:1}}" 2>/dev/null)
+        k=$(printf "%d" "'${{KEY:$((j % kl)):1}}" 2>/dev/null)
+        res=$((c ^ k))
+        safe=$(( (res % 95) + 32 ))
+        out="$out$(printf "\\\\$(printf '%03o' "$safe")")"
+        j=$((j+1))
+    done
+    
+    # Reverse
+    out=$(echo "$out" | rev)
+    
+    # ROT13
+    echo "$out" | tr 'A-Za-z' 'N-ZA-Mn-za-m'
+}
+
+# Execute
+FINAL=$(decrypt "$PAYLOAD")
+if [ -n "$FINAL" ]; then
+    eval "$FINAL"
+else
+    echo "[ERROR] Decryption failed"
+fi
+exit 0
+'''
+    return script_content
+
+# ========== ENCRYPT FILE (AUTO TIMPA) ==========
+def encrypt_file(file_path, key):
+    """Encrypt file dan timpa aslinya (backup otomatis)"""
+    print(f"\n📁 File: {file_path}")
+    
+    if not os.path.exists(file_path):
+        log(f"File not found: {file_path}", True)
         return False
     
-    # Coba static dulu, fallback tanpa static
-    cmd = [compiler, '-static', '-O2', '-o', output_bin_path, c_code_path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Baca file asli
+    with open(file_path, 'r') as f:
+        original_content = f.read()
     
-    if result.returncode != 0:
-        cmd = [compiler, '-O2', '-o', output_bin_path, c_code_path]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+    print(f"📊 Size: {len(original_content)} bytes")
     
-    return result.returncode == 0
-
-def embed_binary_to_script(binary_path, output_path, marker="KAITOX"):
-    """Embed binary ke shell script"""
+    # Buat backup
+    backup_path = file_path + ".backup"
+    shutil.copy2(file_path, backup_path)
+    print(f"💾 Backup: {backup_path}")
     
-    shell_template = f'''#!/system/bin/sh
-# HYPERION-SHIELD | Embedded Binary
-# Generated by HYPERION-BINARY-ENCRYPTOR
-
-TEMP_FILE="/data/local/tmp/hyperion_bin_$$"
-
-# Extract binary dari script
-sed "1,/{marker}$/d" "$0" > "$TEMP_FILE" 2>/dev/null
-
-# Set permission dan execute
-chmod 777 "$TEMP_FILE"
-"$TEMP_FILE" "$@"
-
-# Cleanup
-rm -f "$TEMP_FILE"
-exit
-{marker}
-'''
+    # Encrypt
+    print("\n🔐 Encrypting...")
+    encrypted_payload = encrypt_payload(original_content, key)
     
+    # Generate script encrypted
+    encrypted_script = generate_encrypted_script(encrypted_payload, key, len(original_content))
+    
+    # Timpa file asli
+    with open(file_path, 'w') as f:
+        f.write(encrypted_script)
+    
+    os.chmod(file_path, 0o755)
+    
+    print(f"\n✅ Encrypted: {file_path}")
+    print(f"📌 Jalankan di Brevent: sh {file_path}")
+    return True
+
+# ========== DECRYPT FILE (BALIKIN KE ASLI) ==========
+def decrypt_file(file_path, key):
+    """Decrypt file dan balikin ke versi asli"""
+    print(f"\n📁 File: {file_path}")
+    
+    if not os.path.exists(file_path):
+        log(f"File not found: {file_path}", True)
+        return False
+    
+    with open(file_path, 'r') as f:
+        content = f.read()
+    
+    # Extract payload dari shell script
+    import re
+    match = re.search(r'PAYLOAD="([^"]+)"', content)
+    if not match:
+        log("Invalid encrypted file format", True)
+        return False
+    
+    encrypted_payload = match.group(1)
+    
+    # Cek apakah ada backup
+    backup_path = file_path + ".backup"
+    if os.path.exists(backup_path):
+        print(f"💾 Backup found, restoring from backup...")
+        shutil.copy2(backup_path, file_path)
+        print(f"✅ Restored from backup: {file_path}")
+        return True
+    
+    # Kalo gak ada backup, decrypt manual
+    print("\n🔓 Decrypting (no backup found)...")
     try:
-        with open(binary_path, 'rb') as f:
-            binary_data = f.read()
+        decrypted = decrypt_payload(encrypted_payload, key)
         
-        with open(output_path, 'wb') as f:
-            f.write(shell_template.encode('utf-8'))
-            f.write(binary_data)
+        # Timpa file asli dengan hasil decrypt
+        with open(file_path, 'w') as f:
+            f.write(decrypted)
         
-        os.chmod(output_path, 0o755)
+        print(f"✅ Decrypted: {file_path}")
         return True
     except Exception as e:
-        print(f"   Error: {e}")
+        log(f"Decryption failed: {e}", True)
         return False
 
-def encrypt_file(input_file):
-    """Encrypt single file"""
-    
-    print(f"\n📁 Input: {os.path.basename(input_file)} ({os.path.getsize(input_file)} bytes)")
-    
-    with tempfile.TemporaryDirectory() as tmpdir:
-        c_file = os.path.join(tmpdir, "hyperion.c")
-        bin_file = os.path.join(tmpdir, "hyperion.bin")
-        
-        with open(c_file, 'w') as f:
-            f.write(C_TEMPLATE)
-        
-        if not compile_binary(c_file, bin_file):
-            return None
-        
-        output_name = f"hyperion_{Path(input_file).stem}.sh"
-        output_path = os.path.join(OUTPUT_DIR, output_name)
-        
-        if embed_binary_to_script(bin_file, output_path):
-            return output_path
-    return None
+# ========== CHECK DEPENDENCIES ==========
+def check_dependencies():
+    gcc = subprocess.run(['which', 'gcc'], capture_output=True).returncode == 0
+    clang = subprocess.run(['which', 'clang'], capture_output=True).returncode == 0
+    return gcc or clang
 
-def encrypt_folder(input_folder):
-    """Encrypt semua file dalam folder"""
-    
-    results = []
-    for root, dirs, files in os.walk(input_folder):
-        for file in files:
-            filepath = os.path.join(root, file)
-            print(f"\n📄 Processing: {file}")
-            result = encrypt_file(filepath)
-            if result:
-                results.append(result)
-    return results
+# ========== MAIN MENU ==========
+def main_menu():
+    while True:
+        clear_screen()
+        print_banner()
+        print("   📋 MAIN MENU:")
+        print("   ┌─────────────────────────────────────┐")
+        print("   │  [1] 🔒 ENCRYPT File                │")
+        print("   │  [2] 🔓 DECRYPT File                │")
+        print("   │  [3] 📁 Show Encrypted Files        │")
+        print("   │  [4] ⚙️  Settings                   │")
+        print("   │  [0] 🚪 EXIT                        │")
+        print("   └─────────────────────────────────────┘")
+        print("")
+        
+        choice = input("   Choice: ").strip()
+        
+        if choice == "1":
+            clear_screen()
+            print_banner()
+            print("   🔒 ENCRYPT FILE")
+            print("   ─────────────────────────────────────")
+            print("   📌 Contoh path:")
+            print("      - /sdcard/script.sh")
+            print("      - /data/data/com.termux/files/home/test.sh")
+            print("")
+            file_path = input("   File path: ").strip()
+            file_path = os.path.expanduser(file_path)
+            
+            if not os.path.exists(file_path):
+                log(f"File not found: {file_path}", True)
+                input("\n   Press Enter to continue...")
+                continue
+            
+            key = input(f"   Encryption key (default: {SECRET_KEY[:4]}...): ").strip()
+            if not key:
+                key = SECRET_KEY
+            
+            if encrypt_file(file_path, key):
+                log(f"File encrypted successfully!")
+            else:
+                log("Encryption failed!", True)
+            input("\n   Press Enter to continue...")
+        
+        elif choice == "2":
+            clear_screen()
+            print_banner()
+            print("   🔓 DECRYPT FILE")
+            print("   ─────────────────────────────────────")
+            file_path = input("   File path: ").strip()
+            file_path = os.path.expanduser(file_path)
+            
+            if not os.path.exists(file_path):
+                log(f"File not found: {file_path}", True)
+                input("\n   Press Enter to continue...")
+                continue
+            
+            key = input(f"   Decryption key: ").strip()
+            
+            if key != SECRET_KEY:
+                log("Wrong key! Access denied.", True)
+                input("\n   Press Enter to continue...")
+                continue
+            
+            if decrypt_file(file_path, key):
+                log(f"File decrypted successfully!")
+            else:
+                log("Decryption failed!", True)
+            input("\n   Press Enter to continue...")
+        
+        elif choice == "3":
+            clear_screen()
+            print_banner()
+            print("   📁 ENCRYPTED FILES")
+            print("   ─────────────────────────────────────")
+            
+            # Cari file .sh yang mungkin ter-encrypt
+            search_paths = ["/sdcard", "/sdcard/Download", "/data/data/com.termux/files/home"]
+            found = []
+            
+            for sp in search_paths:
+                if os.path.exists(sp):
+                    for f in os.listdir(sp):
+                        if f.endswith('.sh'):
+                            full_path = os.path.join(sp, f)
+                            # Cek apakah file ter-encrypt (ada pattern PAYLOAD)
+                            try:
+                                with open(full_path, 'r') as chk:
+                                    content = chk.read()
+                                    if 'PAYLOAD="' in content and 'HYPERION-SHIELD' in content:
+                                        found.append(full_path)
+                            except:
+                                pass
+            
+            if found:
+                for i, f in enumerate(found, 1):
+                    size = os.path.getsize(f) / 1024
+                    print(f"   {i}. {f} ({size:.2f} KB)")
+            else:
+                print("   No encrypted files found")
+            
+            input("\n   Press Enter to continue...")
+        
+        elif choice == "4":
+            clear_screen()
+            print_banner()
+            print("   ⚙️ SETTINGS")
+            print("   ─────────────────────────────────────")
+            print(f"   Current SECRET_KEY: {SECRET_KEY}")
+            new_key = input("   New key (min 10 chars, enter to skip): ").strip()
+            if new_key and len(new_key) >= 10:
+                global SECRET_KEY
+                SECRET_KEY = new_key
+                log(f"Key changed to: {SECRET_KEY[:4]}...{SECRET_KEY[-4:]}")
+            print(f"   Output backup: .backup (same folder)")
+            input("\n   Press Enter to continue...")
+        
+        elif choice == "0":
+            print("\n   👋 Goodbye, Komandan!")
+            sys.exit(0)
 
-def create_zip_archive(folder_path):
-    """Buat zip dari folder"""
-    zip_path = os.path.join(OUTPUT_DIR, f"hyperion_{Path(folder_path).name}.zip")
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(folder_path):
-            for file in files:
-                filepath = os.path.join(root, file)
-                arcname = os.path.relpath(filepath, folder_path)
-                zipf.write(filepath, arcname)
-    return zip_path
-
-def bulk_encrypt(input_folder):
-    """Encrypt folder dan buat zip"""
-    print(f"\n📦 Processing folder: {input_folder}")
-    results = encrypt_folder(input_folder)
-    
-    if results:
-        zip_path = create_zip_archive(OUTPUT_DIR)
-        print(f"\n✅ Zip archive: {zip_path}")
-    
-    return results
-
-def main():
-    print_banner()
-    
-    # Setup storage untuk Termux
+# ========== RUN ==========
+if __name__ == "__main__":
+    # Setup Termux
     if os.path.exists("/data/data/com.termux"):
-        print("📱 Termux detected. Setting up storage...")
+        print("📱 Termux detected. Setting up...")
         os.system("termux-setup-storage 2>/dev/null")
-        print("   ✅ Storage ready")
     
     # Cek compiler
     if not check_dependencies():
-        print("\n❌ GCC/Clang not found!")
-        print("   Install: pkg install clang\n")
-        sys.exit(1)
+        print("⚠️ GCC/Clang not found! Installing...")
+        os.system("pkg install clang -y")
     
-    print("\n" + "-"*55)
-    print("PILIH METODE:")
-    print("   [1] Encrypt single file")
-    print("   [2] Encrypt folder (batch)")
-    print("   [3] Encrypt folder + buat ZIP")
-    print("   [4] Help")
-    print("-"*55)
-    
-    choice = input("\nChoice (1/2/3/4): ").strip()
-    
-    if choice == "1":
-        path = input("File path: ").strip()
-        path = os.path.expanduser(path)
-        
-        if not os.path.exists(path):
-            print(f"❌ File not found: {path}")
-            sys.exit(1)
-        
-        output = encrypt_file(path)
-        if output:
-            print(f"\n✅ SUCCESS! Output: {output}")
-        else:
-            print("\n❌ Encryption failed!")
-    
-    elif choice == "2":
-        path = input("Folder path: ").strip()
-        path = os.path.expanduser(path)
-        
-        if not os.path.exists(path):
-            print(f"❌ Folder not found: {path}")
-            sys.exit(1)
-        
-        results = encrypt_folder(path)
-        if results:
-            print(f"\n✅ SUCCESS! {len(results)} files encrypted")
-            for r in results:
-                print(f"   - {r}")
-        else:
-            print("\n❌ No files encrypted!")
-    
-    elif choice == "3":
-        path = input("Folder path: ").strip()
-        path = os.path.expanduser(path)
-        
-        if not os.path.exists(path):
-            print(f"❌ Folder not found: {path}")
-            sys.exit(1)
-        
-        bulk_encrypt(path)
-    
-    elif choice == "4":
-        print("""
-╔═══════════════════════════════════════════════════════╗
-║                     HELP                              ║
-╠═══════════════════════════════════════════════════════╣
-║                                                       
-║  HYPERION-BINARY-ENCRYPTOR                            
-║                                                       
-║  Fungsi: Embed file ke shell script dengan            
-║          metode binary embedding (KAITOX)             
-║                                                       
-║  Output: File .sh di folder Downloads                
-║                                                       
-║  Cara pakai:                                          
-║    1. Pilih metode (1/2/3)                           
-║    2. Masukkan path file/folder                       
-║    3. Tunggu proses selesai                          
-║                                                       
-║  Prasyarat:                                           
-║    - Termux + clang (pkg install clang)              
-║    - Izin storage (termux-setup-storage)             
-║                                                       
-╚═══════════════════════════════════════════════════════╝
-        """)
-        return
-    
-    else:
-        print("❌ Invalid choice!")
-
-if __name__ == "__main__":
     try:
-        main()
+        main_menu()
     except KeyboardInterrupt:
-        print("\n\n❌ Interrupted")
+        print("\n\n👋 Goodbye!")
+        sys.exit(0)
     except Exception as e:
         print(f"\n❌ Error: {e}")
+        sys.exit(1)
